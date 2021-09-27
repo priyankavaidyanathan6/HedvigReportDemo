@@ -131,7 +131,7 @@ public class ReportServiceImpl implements ReportService {
             ArrayList contractReportList = null;
 
             for (Month month: Month.values()) {
-                map.put(month.toString(), calculate1(year, false, month, map.get(month.minus(1).toString())));
+                map.put(month.toString(), calculateMetrics(year, false, month, map.get(month.minus(1).toString())));
             }
 
             // Getting Collection of values from HashMap
@@ -163,7 +163,7 @@ public class ReportServiceImpl implements ReportService {
 
             for (Month month: Month.values()) {
 
-                map.put(month.toString(), calculate1(year, true, month, map.get(month.minus(1).toString())));
+                map.put(month.toString(), calculateMetrics(year, true, month, map.get(month.minus(1).toString())));
 
             }
             // Getting Collection of values from HashMap
@@ -172,10 +172,7 @@ public class ReportServiceImpl implements ReportService {
             return contractReportList;
 
         } catch (Exception e) {
-            e.printStackTrace();
-
             throw new HttpClientErrorException(HttpStatus.INTERNAL_SERVER_ERROR, "Unexpected Error.Please try again");
-
         }
 
     }
@@ -203,7 +200,9 @@ public class ReportServiceImpl implements ReportService {
         }
     }
 
-    private ContractReport calculate1(int year, boolean all, Month month, ContractReport previousContractReport) {
+
+
+    private ContractReport calculateMetrics(int year, boolean allEvents, Month month, ContractReport previousContractReport) {
         int totalNumberOfContracts = 0;
         Integer yearlyPremium = 0;
         Integer monthlyPremium = 0;
@@ -225,7 +224,6 @@ public class ReportServiceImpl implements ReportService {
 
             contractList = (ArrayList<Contract> ) createdEventsListOfTheCurrentMonth.stream().map(x -> createContractObject(x)).collect(Collectors.toList());
             totalNumberOfContracts = createdEventsListOfTheCurrentMonth.size();
-            //monthlyPremium = createdEventsListOfTheCurrentMonth.stream().map(x -> x.getPremium()).reduce(0, Integer::sum);
         }
 
         if (previousContractReport != null && previousContractReport.getContractList() != null) {
@@ -234,7 +232,6 @@ public class ReportServiceImpl implements ReportService {
             totalNumberOfContracts = totalNumberOfContracts + previousContractReport.getContractList().size();
             contractList.addAll(previousMonthContractList);
             carriedOverYearlyPremium = previousContractReport.getCarriedOverYearlyPremium();
-            //monthlyPremium = previousMonthContractList.stream().map(x -> x.getPremium()).reduce(0, Integer::sum) + previousContractReport.getMonthPremium() + monthlyPremium;
             monthlyPremium = previousContractReport.getMonthPremium() + monthlyPremium;
         }
 
@@ -242,7 +239,7 @@ public class ReportServiceImpl implements ReportService {
             return null;
         }
 
-        if (all) {
+        if (allEvents) {
 
             ArrayList<PriceIncreasedEvent> priceIncreasedEventArrayList = priceIncreasedEventRepository.findAllByAtDateBetween(firstDayOfMonth, lastDayOfMonth);
             ArrayList<PriceDecreasedEvent> priceDecreasedEventArrayList = priceDecreasedEventRepository.findAllByAtDateBetween(firstDayOfMonth, lastDayOfMonth);
@@ -258,13 +255,14 @@ public class ReportServiceImpl implements ReportService {
                 contractList.stream().forEach(x -> calculateIncreaseInPremium(x, priceIncreasedEventArrayList, month));
 
             }
-            ArrayList<Integer> in = (ArrayList) priceIncreasedEventArrayList.stream().map(x -> x.getContractId()).collect(Collectors.toList()); in .addAll((ArrayList) priceDecreasedEventArrayList.stream().map(x -> x.getContractId()).collect(Collectors.toList()));
+            ArrayList<Integer> contractIdsOfChangeEvents = (ArrayList) priceIncreasedEventArrayList.stream().map(x -> x.getContractId()).collect(Collectors.toList());
+            contractIdsOfChangeEvents .addAll((ArrayList) priceDecreasedEventArrayList.stream().map(x -> x.getContractId()).collect(Collectors.toList()));
 
-            if (! in .isEmpty()) {
+            if (! contractIdsOfChangeEvents .isEmpty()) {
                 ArrayList<Contract> unchanged = (ArrayList<Contract> )
                         contractList.stream()
                                 .filter(
-                                        x -> in .stream()
+                                        x -> contractIdsOfChangeEvents .stream()
                                                 .anyMatch(c -> c != x.getContractId()))
                                 .collect(Collectors.toList());
 
@@ -283,8 +281,6 @@ public class ReportServiceImpl implements ReportService {
 
         monthlyPremium = contractList.stream().map(x -> x.getPremium()).reduce(0, Integer::sum) + monthlyPremium;
 
-        ////////
-
         ArrayList<ContractTerminatedEvent> terminatedEventsOfTheCurrentMonth = contractTerminatedEventRepository.findAllByDateBetween(firstDayOfMonth, lastDayOfMonth);
 
         if (terminatedEventsOfTheCurrentMonth != null) {
@@ -296,7 +292,7 @@ public class ReportServiceImpl implements ReportService {
                                             .anyMatch(c -> c.getContractId() == x.getContractId()))
                             .collect(Collectors.toList());
         }
-        if (!all) {
+        if (!allEvents) {
             contractList.removeAll(terminatedContracts);
             carriedOverYearlyPremium = carriedOverYearlyPremium + calculateCarriedOverYearlyPremiumForTerminatedEvents(monthIntValue, terminatedEventsOfTheCurrentMonth);
             yearlyPremium = (((contractList.stream().map(x -> x.getPremium()).reduce(0, Integer::sum))) * 12) + carriedOverYearlyPremium;
@@ -306,15 +302,12 @@ public class ReportServiceImpl implements ReportService {
             contractList.removeAll(terminatedContracts);
             for (int i = 0; i<month.ordinal(); i++) {
                 for (Contract contract: contractList) {
-
                     if (contract.getPriceChange().get(Month.of(i + 1)) != null) {
                         yearlyPremium = yearlyPremium + contract.getPriceChange().get(Month.of(i + 1));
                     }
 
                 }
-
             }
-
             yearlyPremium = yearlyPremium + (((contractList.stream().map(x -> x.getPremium()).reduce(0, Integer::sum)))) * (12 - month.ordinal()) + carriedOverYearlyPremium;
 
         }
@@ -364,7 +357,7 @@ public class ReportServiceImpl implements ReportService {
         if (contractTerminatedEventList != null) {
             for (ContractTerminatedEvent contractTerminatedEvent: contractTerminatedEventList) {
                 contractList.stream().filter(x -> x.getContractId() == contractTerminatedEvent.getContractId()).forEach(x -> {
-                    carriedOverPremium[0] = carriedOverPremium[0] + x.getPriceChange().values().stream().map(y -> y).reduce(0, Integer::sum);
+                    carriedOverPremium[0] = carriedOverPremium[0] + x.getPriceChange().values().stream().reduce(0, Integer::sum);
                 });
 
             }
